@@ -1,14 +1,12 @@
-name: Python CI
+name: Deploy to Server
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches:
+      - main  # Автоматический запуск при пуше в ветку main
 
 jobs:
-  build:
-
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,9 +16,27 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.9'  # Укажите версию Python, которую используете
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
+    - name: Add SSH key
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Deploy to server
+      run: |
+        ssh -o StrictHostKeyChecking=no ${{ secrets.USERNAME }}@${{ secrets.SERVER_IP }} << 'EOF'
+        cd /root/TransferBot  # Укажите путь к вашему проекту на сервере
+        git pull origin main
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # Остановите текущий процесс бота, если он запущен
+        pkill -f "python main.py" || true
+        # Запустите бота
+        nohup python main.py > bot.log 2>&1 &
+        EOF
