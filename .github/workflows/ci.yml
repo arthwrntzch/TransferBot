@@ -16,7 +16,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'  # Укажите версию Python, которую используете
+        python-version: '3.9'
 
     - name: Install dependencies
       run: |
@@ -31,12 +31,12 @@ jobs:
     - name: Deploy to server
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
-        cd /root/TransferBot  # Укажите путь к вашему проекту на сервере
-        git pull origin main
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        # Остановите текущий процесс бота, если он запущен
-        pkill -f "python main.py" || true
-        # Запустите бота
-        nohup python main.py > bot.log 2>&1 &
+          echo "✅ Подключение успешно"
+          cd /root/TransferBot || exit 1
+          git pull origin main
+          python3 -m pip install --upgrade pip
+          pip3 install -r requirements.txt
+          pkill -f "python3 main.py" || true
+          nohup python3 main.py > bot.log 2>&1 &
+          echo "🚀 Бот запущен!"
         EOF
