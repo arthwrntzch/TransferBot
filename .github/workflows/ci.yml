@@ -30,7 +30,7 @@ jobs:
 
     - name: Deploy to server
       run: |
-        ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+        ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
         cd /root/TransferBot  # Укажите путь к вашему проекту на сервере
         git pull origin main
         python -m pip install --upgrade pip
