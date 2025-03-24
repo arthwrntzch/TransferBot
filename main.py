@@ -26,7 +26,7 @@ bot = telebot.TeleBot(TOKEN)
 
 # Подключение к Google Sheets
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-CREDS_FILE = "andreytelegrambot-ff611e6788bd.json"
+CREDS_FILE = "andreytelegrambot-764166f5a681.json"
 SPREADSHEET_ID = "16T0XpPEOrOTzTNd8lZKIEH4HrLMxhbO32_47qGrnmGc"
 
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPES)
@@ -754,12 +754,13 @@ def handle_client_question_replace(call):
 ##############################################
 # Админ: прикрепить водителя к заявке
 ##############################################
+@bot.callback_query_handler(func=lambda call: call.data.startswith("attach_driver_"))
 def attach_driver(call):
     chat_id = call.message.chat.id
     order_id = call.data.split("_")[2]
 
     user_data[chat_id] = {"order_id": order_id, "action": "attach_driver"}
-    bot.send_message(chat_id, "Введите юзернейм водителя:")
+    bot.send_message(chat_id, "Введите номер телефона или юзернейм водителя (без @):")
     bot.register_next_step_handler_by_chat_id(chat_id, process_driver_input)
 
 
@@ -781,10 +782,10 @@ def process_driver_input(message):
                      reply_markup=markup)
 
 
+@bot.callback_query_handler(func=lambda call: call.data == "confirm_attach_driver")
 def confirm_attach_driver(call):
     chat_id = call.message.chat.id
-    if (chat_id not in user_data
-            or user_data[chat_id].get("action") != "attach_driver"):
+    if (chat_id not in user_data or user_data[chat_id].get("action") != "attach_driver"):
         bot.send_message(chat_id, "❌ Ошибка: Данные заявки отсутствуют.")
         return
 
@@ -797,29 +798,35 @@ def confirm_attach_driver(call):
         bot.send_message(chat_id, "❌ Заявка не найдена.")
         return
 
-    old_driver_username = orders[order_index][1].lstrip("@").strip()
-    sheet.update_cell(order_index + 1, 2, new_driver_info)  # B колонка: водитель
+    # Проверяем, зарегистрирован ли водитель в базе данных
+    clean_username = new_driver_info.lstrip('@')
+    conn = sqlite3.connect('users_orders.db')
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT * FROM drivers WHERE username = ? OR phone = ?',
+        (clean_username, clean_username)
+    )
+    driver_data = cursor.fetchone()
+    conn.close()
 
+    if not driver_data:
+        bot.send_message(chat_id,
+            "❌ Новый водитель не найден в базе (drivers). Оповещение не отправлено. Водитель не будет прикреплён.")
+        del user_data[chat_id]
+        return
+
+    # Если водитель найден, обновляем заявку в Google Sheets
+    old_driver = orders[order_index][1]
+    sheet.update_cell(order_index + 1, 2, new_driver_info)
     bot.send_message(chat_id,
                      f"✅ Водитель {new_driver_info} успешно прикреплён к заявке №{order_id}.")
 
-    # Оповещение клиента
-    client_chat_id = get_chat_id_by_order_id(order_id)
-    if not client_chat_id:
-        bot.send_message(chat_id,
-                         "❌ Ошибка: Невозможно найти chat_id клиента.")
-    else:
-        clean_username = new_driver_info.lstrip('@')
-        conn = sqlite3.connect('users_orders.db')
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT * FROM drivers WHERE username = ? OR phone = ?',
-            (clean_username, clean_username)
-        )
-        driver_data = cursor.fetchone()
-        conn.close()
-
-        if driver_data:
+    # Если водитель действительно сменился, оповещаем клиента
+    if old_driver.strip() and old_driver != new_driver_info:
+        client_chat_id = get_chat_id_by_order_id(order_id)
+        if not client_chat_id:
+            bot.send_message(chat_id, "❌ Ошибка: Невозможно найти chat_id клиента.")
+        else:
             orders = sheet.get_all_values()
             order = next((o for o in orders if o[0] == order_id), None)
             if order:
@@ -833,53 +840,21 @@ def confirm_attach_driver(call):
                 try:
                     bot.send_message(client_chat_id, msg_text)
                     bot.send_message(chat_id, "✅ Клиент оповещён о смене водителя.")
-
-                    # Оповещение нового водителя
-                    driver_message = (
-                        f"🚖 Уведомление:\n"
-                        f"Вы назначены водителем по заявке №{order_id}.\n"
-                        f"Дата подачи: {order[4]}\n"
-                        f"Время подачи: {order[5]}\n"
-                        f"Адрес подачи: {order[8]}\n"
-                        f"📍 Адрес прибытия: {order[9]}\n"
-                        f"🧑‍🤝‍🧑 Пассажиров: {order[10]}, 👶🏻 Детей: {order[11]}\n"
-                        f"💺 Кресло: {order[17]}, 🏎️ Платка: {order[16]}\n"
-                        f"🚗 Тариф: {order[15]}\n"
-                        f"Клиент: {order[12]}, Телефон: {order[13]}"
-                    )
-                    bot.send_message(driver_data[0], driver_message)
-
-                    # Оповещение старого водителя, если отличается
-                    if old_driver_username and old_driver_username != clean_username:
-                        conn = sqlite3.connect('users_orders.db')
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            'SELECT user_id FROM drivers WHERE username = ?',
-                            (old_driver_username,)
-                        )
-                        old_driver_result = cursor.fetchone()
-                        conn.close()
-                        if old_driver_result:
-                            bot.send_message(
-                                old_driver_result[0],
-                                f"ℹ️ Вы были сняты с заявки №{order_id}."
-                            )
-
                 except telebot.apihelper.ApiTelegramException as e:
-                    bot.send_message(chat_id, f"❌ Не удалось оповестить: {e}")
-        else:
-            bot.send_message(chat_id,
-                             "❌ Новый водитель не найден в базе (drivers). Оповещение не отправлено.")
-
+                    bot.send_message(chat_id, f"❌ Не удалось оповестить клиента: {e}")
+            else:
+                bot.send_message(chat_id, "❌ Не удалось найти заявку для уведомления клиента.")
     del user_data[chat_id]
 
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_attach_driver")
 def cancel_attach_driver(call):
     chat_id = call.message.chat.id
     if chat_id in user_data and user_data[chat_id].get("action") == "attach_driver":
         del user_data[chat_id]
 
     bot.send_message(chat_id, "❌ Прикрепление водителя отменено.")
-
 
 ##############################################
 # Стоимость услуг
