@@ -26,7 +26,7 @@ bot = telebot.TeleBot(TOKEN)
 
 # Подключение к Google Sheets
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-CREDS_FILE = "andreytelegrambot-32539562d97d.json"
+CREDS_FILE = "andreytelegrambot-01769278ee86.json"
 SPREADSHEET_ID = "16T0XpPEOrOTzTNd8lZKIEH4HrLMxhbO32_47qGrnmGc"
 
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPES)
