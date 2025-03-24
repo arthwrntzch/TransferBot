@@ -26,12 +26,14 @@ bot = telebot.TeleBot(TOKEN)
 
 # Подключение к Google Sheets
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-CREDS_FILE = "andreytelegrambot-f11896416c4f.json"
+CREDS_FILE = "andreytelegrambot-32539562d97d.json"
 SPREADSHEET_ID = "16T0XpPEOrOTzTNd8lZKIEH4HrLMxhbO32_47qGrnmGc"
 
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPES)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+spreadsheet = client.open_by_key(SPREADSHEET_ID)  # ✅ сохраняем объект Spreadsheet
+sheet = spreadsheet.sheet1  # ✅ сохраняем worksheet
 
 # Тарифы
 tariffs = {
@@ -390,7 +392,7 @@ def set_cell_color(order_id, color):
             }
         ]
     }
-    sheet.spreadsheet.batch_update(body)
+    spreadsheet.batch_update(body)  # ✅ исправлено
     return True
 
 
@@ -757,7 +759,7 @@ def attach_driver(call):
     order_id = call.data.split("_")[2]
 
     user_data[chat_id] = {"order_id": order_id, "action": "attach_driver"}
-    bot.send_message(chat_id, "Введите номер телефона или юзернейм водителя (без @):")
+    bot.send_message(chat_id, "Введите юзернейм водителя:")
     bot.register_next_step_handler_by_chat_id(chat_id, process_driver_input)
 
 
@@ -1494,23 +1496,63 @@ def process_field_edit(message, field_index):
         bot.send_message(chat_id, "❌ Ошибка: Данные заявки отсутствуют.")
         return
 
-    user_data[chat_id][field_index] = message.text
+    new_value = message.text.strip()
 
-    # Пересчитываем "Подача" (data[3]) если менялись [1] (Вылет/Прилет) или [2] (Время рейса)
+    # Валидация по полю
+    if field_index == 0:  # Дата
+        if not re.match(r"^\d{2}\.\d{2}\.\d{4}$", new_value):
+            bot.send_message(chat_id, "❌ Неверный формат даты. Введите дд.мм.гггг:")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+    elif field_index == 2:  # Время рейса
+        try:
+            datetime.datetime.strptime(new_value, "%H:%M")
+        except ValueError:
+            bot.send_message(chat_id, "❌ Неверный формат времени. Введите ЧЧ:ММ:")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+    elif field_index == 7:  # Кол-во пассажиров
+        if not validate_passenger_count(new_value):
+            bot.send_message(chat_id, "❌ Введите число от 1 до 10 (только цифры):")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+    elif field_index == 8:  # Кол-во детей
+        if not validate_children_count(new_value):
+            bot.send_message(chat_id, "❌ Введите число от 0 до 10 (только цифры):")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+    elif field_index == 9:  # ФИО
+        if not validate_fio(new_value):
+            bot.send_message(chat_id, "❌ ФИО должно содержать только буквы и пробелы.")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+    elif field_index == 10:  # Телефон
+        if not validate_phone_number(new_value):
+            bot.send_message(chat_id, "❌ Номер должен состоять из 11 цифр.")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+    elif field_index == 11:  # Откуда узнали
+        if not validate_referral(new_value):
+            bot.send_message(chat_id, "❌ Укажите только буквы.")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_field_edit, field_index)
+            return
+
+    user_data[chat_id][field_index] = new_value
+
+    # Пересчет поля "Подача"
     if field_index in [1, 2]:
         recalc_dispatch_time(chat_id)
 
-    # Если заявки ещё нет (нет data[15]):
     if len(user_data[chat_id]) < 16:
         bot.send_message(chat_id, "✅ Данные обновлены!")
         send_summary(chat_id)
     else:
-        # Уже подтвержденная заявка -> обновим Google Sheets
         order_id = user_data[chat_id][15]
         if update_google_sheets(order_id, user_data[chat_id]):
             bot.send_message(chat_id, "✅ Данные обновлены в таблице!")
         else:
             bot.send_message(chat_id, "❌ Ошибка при обновлении данных в таблице.")
+
 
 
 def recalc_dispatch_time(chat_id):
@@ -1530,8 +1572,6 @@ def recalc_dispatch_time(chat_id):
 def cancel_edit(call):
     chat_id = call.message.chat.id
     bot.send_message(chat_id, "❌ Редактирование отменено.")
-    send_summary(chat_id)
-
 
 ##############################################
 # Список заявок ("Мои заявки")
